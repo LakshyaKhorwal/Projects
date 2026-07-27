@@ -1,0 +1,451 @@
+---
+title: "GROUP-6 PROJECT"
+author: "Lakshya Khorwal,Disha Monga,Shinjan Goswami,Priyansh Shrivastava,Yenni Akshya,Maddikuntla Pavan Kumar"
+date: "`r Sys.Date()`"
+always_allow_html: true
+---
+
+```{css, echo=FALSE}
+.main-container {
+  max-width: 100% !important;
+  padding: 0 20px;}
+pre.r {
+  max-height: 250px;
+  overflow-y: auto;
+}
+```
+
+```{r setup, include=FALSE}
+setwd("C:/ISI-D BSDS/DAURP/Project/Lakshya/Import-Export")
+getwd()
+s1=read.csv("Principal_Commodity_wise_export_for_the_year_202122.csv")
+s2=read.csv("Principal_Commodity_wise_import_for_the_year_202122.csv")
+s3=read.csv("Principal_Commodity_wise_export_for_the_year_202223.csv")
+s4=read.csv("Principal_Commodity_wise_import_for_the_year_202223.csv")
+setwd("C:/ISI-D BSDS/DAURP/Project/Lakshya/Import-Export/Disha")
+library(readxl)
+ss<-read_excel("G6.xlsx")
+library(ggplot2)
+library(plotly)
+library(lattice)
+library(dplyr)
+library(corrplot)
+library(scales)
+library(tidyr)
+
+```
+
+## Introduction
+
+Our data set is **'IMPORT-EXPORT of various commodities'**. The variables are: PRINCIPLE.COMMODITY, COUNTRY, UNIT, QUANTITY, Value(US$ millions)
+
+The reason we chose this is because of the sheer importance of trade at a global level (as known to all by the very recent example of the halt in crude oil supply). We can observe the trend of a commodity, its demand, inflation, and the overall flow of trade.
+
+Let's start off with how the data set looks like
+
+##Export Value Heatmap
+
+
+```{r heatmap_export-code, echo=FALSE, include=TRUE,message=FALSE, warning=FALSE, fig.width=12, fig.height=10, out.width="100%"}
+# Note: echo=FALSE hides the R code so your slide only shows the beautiful graph!
+s1.1=s1[-24050,]
+p1=ggplot(s1.1, aes(x = COUNTRY, 
+                               y = PRINCIPLE.COMMODITY, 
+                               fill = Value.US..million.|>log(),
+                               text = paste(
+     "<b>Actual Value (US$M):", Value.US..million.)))
+p1=p1+geom_tile(color = "white")+labs(title = "Expirt Value Heatmap",
+        x = "Country", 
+        y = "Commodity")+
+   scale_fill_gradient(low = "darkblue",high = "yellow") +
+   theme(axis.text.x = element_text(angle=90,size=7),
+         axis.text.y = element_text(size = 6))
+p1
+p1_i<-ggplotly(p1)
+p1_i
+```
+
+##Import Value heatmap
+
+```{r heatmap_import-code, echo=FALSE, include=TRUE,message=FALSE, warning=FALSE, fig.width=12, fig.height=10, out.width="100%"}
+# Note: echo=FALSE hides the R code so your slide only shows the beautiful graph!
+s2.1=s2[-11928,]
+p2=ggplot(s2.1, aes(x = COUNTRY, 
+                               y = PRINCIPLE.COMMODITY, 
+                               fill = Value.US..million.|>log(),
+                               text = paste(
+     "<b>Actual Value (US$M):", Value.US..million.)))
+p2=p2+geom_tile(color = "white")+labs(title = "Import Value Heatmap",
+        x = "Country", 
+        y = "Commodity")+
+   scale_fill_gradient(low = "darkblue",high = "yellow") +
+   theme(axis.text.x = element_text(angle=90,size=7),
+         axis.text.y = element_text(size = 6))
+p2_i<-ggplotly(p2)
+p2_i
+```
+
+One of the important factor is the valuation of dollar: 2022's $ is not the same as 2026's. As indicated by the source we chose: https://www.macrotrends.net/1329/us-dollar-index-historical-chart
+here, the valuation of dollar did not change much during 2021-2022,2022-23
+
+Because of this vastness of the data. We had decided to funnel down and use only 2 commodities over the two years.
+
+simple results:
+```{r simple, echo=FALSE, include=TRUE,message=FALSE, warning=FALSE, fig.width=12, fig.height=10, out.width="100%"}
+trade_summary <- ss %>%
+  group_by(`PRINCIPLE COMMODITY`, trade, Year) %>%
+  summarize(
+    Total_Quantity = sum(QUANTITY, na.rm = TRUE),
+    Total_USD_Million = sum(`Value(US$ million)`, na.rm = TRUE),
+    Top_Country = COUNTRY[which.max(QUANTITY)], 
+    .groups = 'drop' 
+  ) %>%
+  arrange(`PRINCIPLE COMMODITY`, trade, Year) %>%
+  as.data.frame()
+
+trade_summary
+```
+
+another of the limitation is that there is no data set for 2020-21
+hence the small sample.
+
+```{css, echo=FALSE}
+/* This forces the code blocks to have a vertical scrollbar if they get too long */
+pre.r {
+  max-height: 250px;
+  overflow-y: auto;
+}
+```
+```{r setup-clipboard, include=FALSE}
+# This secretly activates the Copy button for the reader
+library(xaringanExtra)
+xaringanExtra::use_clipboard()
+```
+```{r jitter-plot, echo=TRUE, message=FALSE, warning=FALSE, fig.width=12, fig.height=8, out.width="100%"}
+
+ss$Year <- as.factor(ss$Year)
+ss$Year <- as.numeric(as.character(ss$Year))
+ss$`PRINCIPLE COMMODITY` <- as.factor(ss$`PRINCIPLE COMMODITY`)
+ss$trade <- as.factor(ss$trade)
+ss_avg <- tapply(ss$`Value(US$ million)`, 
+                 list(ss$Year, ss$`PRINCIPLE COMMODITY`, ss$trade), 
+                 mean, na.rm = TRUE) |>
+  as.table() |>
+  as.data.frame() |>
+  # Make sure the name here perfectly matches your column name!
+  setNames(c("Year", "PRINCIPLE COMMODITY", "trade", "mean_value")) |>
+  subset(!is.na(mean_value))
+
+ss_avg <- ss %>%
+  group_by(Year, `PRINCIPLE COMMODITY`, trade) %>%
+  summarize(mean_value = mean(`Value(US$ million)`, na.rm = TRUE), .groups = 'drop')
+
+d <- ggplot() +
+  geom_jitter(
+    data = ss, 
+    aes(
+      x = as.character(Year), 
+      y = `Value(US$ million)`, 
+      color = trade,   # Color-code by import vs export
+      shape = trade,   # Different shapes for import vs export
+      text = paste(
+        "Country:", COUNTRY,
+        "<br>Trade Type:", trade,
+        "<br>Commodity:", `PRINCIPLE COMMODITY`,
+        "<br>Value (US$M):", `Value(US$ million)`
+        )),
+    width = 0.1, alpha = 0.5, size = 2) +
+  
+  # LAYER B: The line connecting the averages
+  geom_line(
+    data = ss_avg,
+    aes(
+      x = as.character(Year), 
+      y = mean_value, 
+      color = trade, 
+      group = trade,
+      text = paste(
+        "<b>AVERAGE", toupper(trade), "</b>",
+        "<br>Commodity:", `PRINCIPLE COMMODITY`,
+        "<br>Mean Value (US$M):", round(mean_value, 2)
+      )
+    ),
+    linewidth = 1.2
+  ) +
+  
+  # LAYER C: Solid black points on the average line
+  geom_point(
+    data = ss_avg,
+    aes(
+      x = as.character(Year), 
+      y = mean_value, 
+      shape = trade, 
+      text = paste(
+        "<b>AVERAGE", toupper(trade), "</b>",
+        "<br>Commodity:", `PRINCIPLE COMMODITY`,
+        "<br>Mean Value (US$M):", round(mean_value, 2)
+      )
+    ),
+    size = 3, color = "black" 
+  ) +
+  
+  # Split the graph into two panels for Silver and Iron Ore
+  facet_wrap(~ `PRINCIPLE COMMODITY`) +                 
+  
+  # Use a pseudo-log scale so massive outliers (like China) don't crush the smaller countries
+  scale_y_continuous(trans = pseudo_log_trans(base = 10)) + 
+  theme_minimal() +
+  labs(
+    title = "Interactive Trade Value by Year",
+    x = "Year",
+    y = "Value (US$ Million) - Log Scaled",
+    color = "Trade Type",
+    shape = "Trade Type"
+  ) +
+  theme(legend.position = "bottom")
+d_i<- ggplotly(d, tooltip="text")
+d_i
+```
+
+Another way to represent this graph
+```{r cloud_3d, , echo=TRUE, message=FALSE, warning=FALSE, fig.width=12, fig.height=8, out.width="100%"}
+ss$Year <- as.factor(ss$Year)
+ss$`PRINCIPLE COMMODITY` <- as.factor(ss$`PRINCIPLE COMMODITY`)
+ss$Year <- as.character(ss$Year)
+ss$`PRINCIPLE COMMODITY` <- as.character(ss$`PRINCIPLE COMMODITY`)
+# Build the interactive 3D plot
+fig <- plot_ly(
+  data = ss, 
+  x = ~as.character(Year), 
+  y = ~`PRINCIPLE COMMODITY`, 
+  z = ~`Value(US$ million)`|>log(), 
+  color = ~trade, # Color the dots by import/export
+  
+  # Custom hover text
+  text = ~paste(
+    "Country:", COUNTRY,
+    "<br>Trade Type:", trade,
+    "<br>Value (US$M):", `Value(US$ million)`
+  ),
+  hoverinfo = "text",
+  
+  # Define the plot type
+  type = "scatter3d", 
+  mode = "markers",
+  marker = list(size = 5, opacity = 0.7)
+)
+
+# Add titles to the 3D axes
+fig <- fig %>% layout(
+  title = "Interactive 3D Trade Value",
+  scene = list(
+    xaxis = list(title = "Year", type = "category"),
+    yaxis = list(title = "Commodity"),
+    zaxis = list(title = "Value (US$ M)")))
+fig
+
+```
+
+The trend in each country
+```{css, echo=FALSE}
+/* This forces the code blocks to have a vertical scrollbar if they get too long */
+pre.r {
+  max-height: 250px;
+  overflow-y: auto;
+}
+```
+```{r xyplot, echo=TRUE, message=FALSE, warning=FALSE, fig.width=12, fig.height=8, out.width="100%"}
+
+e <- ggplot(ss, aes(
+  x = as.character(Year), 
+  y = `Value(US$ million)`, 
+  group = interaction(COUNTRY, trade),
+  color = trade,
+  
+  # Build the custom hover tooltip
+  text = paste(
+    "Country:", COUNTRY,
+    "<br>Trade Type:", trade,
+    "<br>Value (US$M):", `Value(US$ million)`
+  )
+)) +
+  geom_line(alpha = 0.4) + 
+  geom_point(size = 1.5, alpha = 0.6) + 
+  
+  facet_wrap(~ `PRINCIPLE COMMODITY`) + 
+  scale_y_continuous(trans = pseudo_log_trans(base = 10)) + 
+  theme_minimal() +
+  labs(
+    title = "Interactive Trade Value Trajectories by Country",
+    x = "Year",
+    y = "Value (US$ Million)"
+  )
+
+e_i<-ggplotly(e, tooltip = "text")
+e_i
+```
+
+
+corelation plot
+```{css, echo=FALSE}
+/* This forces the code blocks to have a vertical scrollbar if they get too long */
+pre.r {
+  max-height: 8em;
+  overflow-y: auto;
+}
+```
+```{r corrplot, echo=TRUE, message=FALSE, warning=FALSE, fig.width=8, fig.height=8, out.width="33%", fig.align="center", fig.show="hold"}
+ss$Metric <- paste(ss$`PRINCIPLE COMMODITY`, ss$trade, sep = "_")
+ss_2021 <- subset(ss, Year == "2021")
+wide_matrix_1 <- xtabs(`Value(US$ million)` ~ COUNTRY + Metric,
+                     data = ss_2021)
+cor_matrix <- cor(as.matrix(wide_matrix_1))
+corrplot(cor_matrix, 
+         method = "shade",       # Fills the grid with color (blue = positive, red = negative)
+         type = "upper",         # Hides the bottom half since it's a mirrored reflection
+         addCoef.col = "black",  # Overlays the exact correlation numbers in black text
+         tl.col = "black",       # Makes the text labels black (default is sometimes red)
+         tl.srt = 90,            # Rotates the top text 45 degrees so it fits nicely
+         diag = FALSE,           # Hides the diagonal line of 1.0s (a variable is always 100% correlated with itself)
+         title = "2021 Correlation", mar=c(0,0,2,0))
+
+
+ss$Metric <- paste(ss$`PRINCIPLE COMMODITY`, ss$trade, sep = "_")
+ss_2022 <- subset(ss, Year == "2022")
+wide_matrix_2 <- xtabs(`Value(US$ million)` ~ COUNTRY + Metric,
+                     data = ss_2022)
+cor_matrix <- cor(as.matrix(wide_matrix_2))
+corrplot(cor_matrix, 
+         method = "shade",       # Fills the grid with color (blue = positive, red = negative)
+         type = "upper",         # Hides the bottom half since it's a mirrored reflection
+         addCoef.col = "black",  # Overlays the exact correlation numbers in black text
+         tl.col = "black",       # Makes the text labels black (default is sometimes red)
+         tl.srt = 90,            # Rotates the top text 45 degrees so it fits nicely
+         diag = FALSE,           # Hides the diagonal line of 1.0s (a variable is always 100% correlated with itself)
+         title = "2022 Correlation", mar=c(0,0,2,0))
+```
+
+
+Inflation
+
+inflation formula: $\frac{\text{Current Year} - \text{Past Year}}{\text{Past Year}} \times 100$.
+```{css, echo=FALSE}
+/* This forces the code blocks to have a vertical scrollbar if they get too long */
+pre.r {
+  max-height: 8em;
+  overflow-y: auto;
+}
+```
+```{r inflation, echo=TRUE, message=FALSE, warning=FALSE, fig.width=8, fig.height=8, out.width="33%" }
+inflation_summary <- ss %>%
+  # Group by Commodity, Trade Type, and Year
+  group_by(`PRINCIPLE COMMODITY`, trade, Year) %>%
+  
+  # Calculate the true average unit price for that year
+  summarize(
+    Total_Value = sum(`Value(US$ million)`, na.rm = TRUE),
+    Total_Qty = sum(QUANTITY, na.rm = TRUE),
+    .groups = 'drop'
+  ) %>%
+  mutate(
+    Avg_Yearly_Price = ifelse(Total_Qty > 0, Total_Value / Total_Qty, NA)
+  ) %>%
+  
+  pivot_wider(
+    id_cols = c(`PRINCIPLE COMMODITY`, trade),
+    names_from = Year,
+    values_from = Avg_Yearly_Price,
+    names_prefix = "Price_"
+  ) %>%
+  
+  mutate(
+    Inflation_Percent = ((Price_2022 - Price_2021) / Price_2021) * 100
+  ) %>%
+  arrange(desc(Inflation_Percent))
+
+inflation_summary
+```
+
+Cumulative
+```{r cumulative,echo=TRUE, message=FALSE, warning=FALSE, fig.width=8, fig.height=5, out.width="33%", , fig.align="center", fig.show="hold"}
+#Iron ore
+##import 2021
+iron_import_2021 <- ss %>%
+  filter(`PRINCIPLE COMMODITY` == "IRON ORE", trade == "import", Year == 2021) %>%
+  group_by(COUNTRY) %>%
+  summarise(total_value = sum(`Value(US$ million)`, na.rm = TRUE)) %>%
+  arrange(desc(total_value)) %>%
+  mutate(
+    cum_value = cumsum(total_value),
+    cum_percent = cum_value / sum(total_value) * 100)
+iron_import_2021$cum_percent
+iron_import_2021$COUNTRY[1:10]
+cu_1<-ggplot(iron_import_2021, aes(x = reorder(COUNTRY, -total_value))) +
+  geom_bar(aes(y = total_value), stat = "identity") +
+  geom_line(aes(y = cum_percent * max(total_value) / 100, group = 1),
+            color="green") +
+  geom_point(aes(y = cum_percent * max(total_value) / 100), color="darkgreen", size = 2) +
+  coord_flip() +
+  ggtitle("Iron Ore Import 2021")
+ggplotly(cu_1)
+
+##import 2022
+iron_import_2022 <- ss %>%
+  filter(`PRINCIPLE COMMODITY` == "IRON ORE", trade == "import", Year == 2022) %>%
+  group_by(COUNTRY) %>%
+  summarise(total_value = sum(`Value(US$ million)`, na.rm = TRUE)) %>%
+  arrange(desc(total_value)) %>%
+  mutate(
+    cum_value = cumsum(total_value),
+    cum_percent = cum_value / sum(total_value) * 100)
+iron_import_2022$cum_percent
+iron_import_2022$COUNTRY[1]
+iron_import_2022$COUNTRY[1:10]
+cu_2<-ggplot(iron_import_2022, aes(x = reorder(COUNTRY, -total_value))) +
+  geom_bar(aes(y = total_value), stat = "identity") +
+  geom_line(aes(y = cum_percent * max(total_value) / 100, group = 1),
+            color="green") +
+  geom_point(aes(y = cum_percent * max(total_value) / 100), color="darkgreen", size = 2) +
+  coord_flip() +
+  ggtitle("Iron Ore Import 2022")
+ggplotly(cu_2)
+##export2021
+iron_export_2021 <- ss %>%
+  filter(`PRINCIPLE COMMODITY` == "IRON ORE", trade == "export", Year == 2021) %>%
+  group_by(COUNTRY) %>%
+  summarise(total_value = sum(`Value(US$ million)`, na.rm = TRUE)) %>%
+  arrange(desc(total_value)) %>%
+  mutate(
+    cum_value = cumsum(total_value),
+    cum_percent = cum_value / sum(total_value) * 100)
+iron_export_2021$cum_percent
+iron_export_2021$COUNTRY[1:10]
+cu_3<-ggplot(iron_export_2021, aes(x = reorder(COUNTRY, -total_value))) +
+  geom_bar(aes(y = total_value), stat = "identity") +
+  geom_line(aes(y = cum_percent * max(total_value) / 100, group = 1),
+            color="green") +
+  geom_point(aes(y = cum_percent * max(total_value) / 100), color="darkgreen", size = 2) +
+  coord_flip() +
+  ggtitle("Iron Ore Export 2021")
+ggplotly(cu_3)
+
+##export2022
+iron_export_2022 <- ss %>%
+  filter(`PRINCIPLE COMMODITY` == "IRON ORE", trade == "export", Year == 2022) %>%
+  group_by(COUNTRY) %>%
+  summarise(total_value = sum(`Value(US$ million)`, na.rm = TRUE)) %>%
+  arrange(desc(total_value)) %>%
+  mutate(
+    cum_value = cumsum(total_value),
+    cum_percent = cum_value / sum(total_value) * 100)
+iron_export_2022$cum_percent
+iron_export_2022$COUNTRY[1:10]
+cu_4<-ggplot(iron_export_2022, aes(x = reorder(COUNTRY, -total_value))) +
+  geom_bar(aes(y = total_value), stat = "identity") +
+  geom_line(aes(y = cum_percent * max(total_value) / 100, group = 1),
+            color="green") +
+  geom_point(aes(y = cum_percent * max(total_value) / 100), color="darkgreen", size = 2) +
+  coord_flip() +
+  ggtitle("Iron Ore Export 2022")
+ggplotly(cu_4)
+```
