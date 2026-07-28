@@ -1,0 +1,413 @@
+---
+title: "Rocket Launch Optimization"
+author: "Lakshya Khorwal & Harsh Kumar"
+output:
+  html_document:
+    self_contained: true
+---
+
+# ROCKET LAUNCH OPTIMIZATION
+
+### **LAKSHYA KHORWAL & HARSH KUMAR**
+
+#### **Overview**
+
+#### **Problem**
+
+```{css, echo=FALSE}
+.main-container {
+  max-width: 100% !important;
+  padding: 0 20px;}
+pre.r {
+  max-height: 250px;
+  overflow-y: auto;
+}
+```
+
+**Equality Constraints (The Physics and Boundaries)**
+
+- **Initial State (Point):** The rocket must begin at time $t=0$ with the exact initial position, velocity provided by Earth's rotation, and fully fueled mass. $$X(0) = \begin{bmatrix} r_0 \\ v_0 \\ m_0 \end{bmatrix}$$
+
+- **Terminal Altitude (Point):** At final time $T$, the magnitude of the position vector must exactly equal the radius of the Earth plus the target orbital altitude. $$\|r(T)\| = R_E + h_{orbit}$$
+
+- **Terminal Velocity (Point):** At final time $T$, the velocity vector must perfectly match the required speed and trajectory angle for the target orbit. $$v(T) = v_{orbit}$$
+
+- **Kinematics - Position (Path):** The rate of change of the rocket's position must always equal its velocity. $$\dot{r}(t) = v(t)$$
+
+- **Kinetics - Acceleration (Path):** The rate of change of velocity must equal the sum of all specific forces: Thrust ($U$), Drag ($D$), Gravity ($g$), and Earth's rotational forces ($F_{rot}$). $$\dot{v}(t) = \frac{U(t) - D(t)}{m(t)} + g(t) - F_{rot}$$
+
+- **Mass Depletion (Path):** The rate at which the rocket loses mass must perfectly correlate with the thrust currently being produced by the engines.$$\dot{m}(t) = -\frac{\|U(t)\|}{I_{sp} g_0}$$
+
+**Inequality Constraints (The Physical and Hardware Limits)**
+
+- **Engine Thrust Limits (Path):** The commanded thrust magnitude must not exceed the maximum output of the engines, nor fall below the minimum throttling capability. $$U_{min} \le \|U(t)\| \le U_{max}$$
+
+- **Max-Q - Dynamic Pressure (Path):** The structural limit of the rocket frame against aerodynamic stress must stay below the maximum allowable pressure. $$\frac{1}{2} \rho(r) \|v(t)\|^2 \le q_{max}$$
+
+- **Axial Acceleration - Max-G (Path):** To prevent crushing the payload, the net acceleration must not exceed a structural limit. $$\frac{\|U(t) + D(t)\|}{m(t)} \le G_{max}$$
+
+- **Gimbal Angle - Steering (Path):** The angle between the commanded thrust vector and the rocket's longitudinal axis cannot exceed the physical rotation limit of the engine gimbals. $$\arccos\left(\frac{U_{axial}}{\|U\|}\right) \le \delta_{max}$$
+
+- **Gimbal rate:** The rate at which the engines can change their angle. $$\left| \dot{\delta}(t) \right| \le \dot{\delta}_{max}$$
+
+- **Fairing Heat Flux (Path):** The aerodynamic heating rate must stay below the fairing's melting threshold. $$C_h \rho(r) \|v(t)\|^3 \le \dot{q}_{max}$$
+
+- **Propellant Reserves (Point):** To ensure reusability, the mass of a booster at the moment of stage separation must be greater than its empty dry mass plus the exact mass of fuel required for the return burn. $$m(t_{sep}) \ge m_{dry} + m_{land}$$
+
+#### **OPTIMIZATION FUNCTION** $$J = \min_{U(t)} \int_{0}^{T} \|U(t)\|^2 dt$$
+
+#### **Dataset**
+
+Data was extracted from SpaceX User Manuals and technical telemetry logs from previous [Falcon Heavy](https://www.spacex.com/vehicles/falcon-heavy) missions.
+
+- Initial Mass: 111,500 kg (fully fueled)
+- Dry Mass: 22,200 kg (threshold for mission failure)
+- Thrust Limit: 934,000 N (Merlin Vacuum rating)
+
+#### **The R code**
+
+```{r simulation_solve, echo=TRUE, results='hide', message=FALSE, warning=FALSE, fig.width=8, fig.height=6, out.width="75%"}
+library(nloptr)
+
+# --- 1. DEFINE CONSTANTS ---
+N <- 100               # Number of discrete time steps
+dt <- 5.0            # Time step duration (seconds) - Total flight time = 500s
+g0 <- 9.81            # Sea-level gravity (m/s^2)
+Isp <- 311            # Specific impulse of Falcon Heavy Vacuum engine (seconds)
+U_max <- 934000       # Max thrust of Merlin Vacuum engine (Newtons)
+m_dry <- 22200        # Empty mass of Falcon 9 upper stage + payload (kg)
+m_initial <- 111500   # Fully fueled initial mass (kg)
+target_alt <- 1000000 # 1000 km target altitude (meters)
+target_vel <- 7350    # Orbital velocity at 1000 km (m/s)
+
+
+# NEW: Staging Constants
+N_stage <- 25              # The exact node where staging happens (Splice Point)
+m_booster_drop <- 30000    # The mass of the empty boosters falling away (kg)
+
+# NEW: Updated unpack function to extract the Free Time variable
+unpack_state <- function(x) {
+  list(
+    h = x[1:N],
+    v = x[(N + 1):(2 * N)],
+    m = x[(2 * N + 1):(3 * N)],
+    u = x[(3 * N + 1):(4 * N)],
+    t_f = x[4 * N + 1]       # The very last number is our Total Flight Time!
+  )
+}
+
+
+# --- 2. SETUP GLOBAL TRACKING (Must go here!) ---
+iteration_history <<- list()
+eval_count <<- 0
+
+# --- 3. THE OBJECTIVE FUNCTION (Upgraded for 2D Tracking) ---
+eval_f <- function(x) {
+  state <- unpack_state(x)
+  eval_count <<- eval_count + 1
+  
+  # Take a snapshot of h, v, and t_f every 500 evaluations
+  if (eval_count %% 500 == 0) {
+    iteration_history[[length(iteration_history) + 1]] <<- list(
+      h = state$h,
+      v = state$v,
+      t_f = state$t_f
+    )
+  }
+  
+  return(-state$m[N]) 
+}
+
+# --- 4. EQUALITY CONSTRAINTS (Physics) ---
+# nloptr expects this function to return a vector of values that must equal ZERO.
+eval_g_eq <- function(x) {
+  state <- unpack_state(x)
+  eq_constraints <- numeric(0)
+  
+  # NEW: Time step is now dynamically chosen by the solver
+  dt <- state$t_f / (N - 1)
+  # A. Initial State Constraints (Launch Pad)
+  eq_constraints <- c(eq_constraints, state$h[1] - 0)           # Start at altitude 0
+  eq_constraints <- c(eq_constraints, state$v[1] - 0)           # Start at velocity 0
+  eq_constraints <- c(eq_constraints, state$m[1] - m_initial)   # Start fully fueled
+  
+  # B. Terminal State Constraints (1000 km Orbit)
+  eq_constraints <- c(eq_constraints, state$h[N] - target_alt)  # End at 1000km
+  eq_constraints <- c(eq_constraints, state$v[N] - target_vel)  # End at orbital speed
+  
+  # C. System Dynamics (Euler Integration across all time steps)
+  #Physics loop
+  for (k in 1:(N - 1)) {
+    # Gravity gets weaker with altitude (Newton's law approximation)
+    g_current <- g0 * (6371000 / (6371000 + state$h[k]))^2
+    
+    # Kinematics: h[k+1] = h[k] + v[k]*dt
+    dh <- state$h[k+1] - (state$h[k] + state$v[k] * dt)
+    
+    # Kinetics: v[k+1] = v[k] + (Thrust/Mass - Gravity) * dt
+    dv <- state$v[k+1] - (state$v[k] + (state$u[k] / state$m[k] - g_current) * dt)
+    
+    # NEW: THE SPLICE POINT
+    if (k == N_stage) {
+      # At this exact step, subtract fuel burned AND the empty booster mass
+      dm <- state$m[k+1] - (state$m[k] - m_booster_drop - (state$u[k] / (Isp * g0)) * dt)
+    } else {
+      # Normal mass depletion
+      dm <- state$m[k+1] - (state$m[k] - (state$u[k] / (Isp * g0)) * dt)
+    }
+    
+    eq_constraints <- c(eq_constraints, dh, dv, dm)
+  }
+  
+  return(eq_constraints)
+}
+
+
+
+
+# --- 4. INITIAL GUESS & BOUNDS ---
+# Guess it takes about 600 seconds to reach orbit
+t_f_guess <- 600 
+
+t_guess <- seq(0, 1, length.out = N)
+x0_h <- target_alt * (t_guess^2)      
+x0_v <- target_vel * t_guess          
+x0_m <- seq(m_initial, m_dry, length.out = N)
+x0_u <- rep(U_max * 0.8, N) 
+
+# Combine arrays AND append the time guess to the end
+x0 <- c(x0_h, x0_v, x0_m, x0_u, t_f_guess)
+
+# Define Bounds (Adding limits for our new Time variable)
+lb <- c(rep(0, N), rep(-1000, N), rep(m_dry, N),
+        rep(0, N), 100)  # Time must be > 100s
+ub <- c(rep(target_alt * 2, N), rep(target_vel * 2, N),
+        rep(m_initial, N), rep(U_max, N), 2000) # Time < 2000s        
+
+# --- 5. RUN THE SOLVER ---
+opts <- list("algorithm" = "NLOPT_LN_COBYLA", 
+             "xtol_rel" = 1.0e-5,
+             "maxeval" = 20000,
+             "print_level" = 0)
+
+result <- nloptr(x0 = x0,
+                 eval_f = eval_f,
+                 eval_g_eq = eval_g_eq,
+                 lb = lb,
+                 ub = ub,
+                 opts = opts)
+
+
+# Unpack and Print 
+optimal_trajectory <- unpack_state(result$solution)
+
+#\n--- OPTIMAL FINAL STATE ---\n
+cat("Final Altitude:", optimal_trajectory$h[N], "meters\n")
+cat("Final Velocity:", optimal_trajectory$v[N], "m/s\n")
+cat("Final Mass:    ", optimal_trajectory$m[N], "kg\n")
+
+
+#Extracting the best mathematical vector the solver found
+best_x <- result$solution
+
+#Unpack that giant vector back into physical rocket states
+optimal_trajectory <- unpack_state(best_x)
+
+cat(result$message, "\n")
+print(result)
+
+# --- 7. ANIMATE THE RESULTS ---
+time_steps <- seq(0, (N-1)*dt, by=dt)
+
+# Define our Splice Points (Assuming MECO happens around 150 seconds)
+t_MECO <- 150       # Main Engine Cutoff
+t_StageSep <- 155   # First Stage separates (Mass drops instantaneously)
+t_SES <- 160        # Second Engine Start
+
+# Set up a 3-row, 1-column layout for stacked graphs
+par(mfrow = c(3, 1), mar = c(4, 4, 2, 1))
+
+# 1. Altitude Graph
+plot(time_steps, optimal_trajectory$h / 1000, type="l", lwd=3, col="darkblue",
+     main="Altitude vs Time", xlab="", ylab="Altitude (km)")
+# Adding Splice Lines
+abline(v = c(t_MECO, t_StageSep, t_SES), col=c("red", "black", "green"), lty=2, lwd=2)
+legend("topleft", legend=c("MECO", "Stage Sep", "SES"), col=c("red", "black", "green"), lty=2)
+
+# 2. Velocity Graph (will see the acceleration change here)
+plot(time_steps, optimal_trajectory$v, type="l", lwd=3, col="darkorange",
+     main="Velocity vs Time", xlab="", ylab="Velocity (m/s)")
+abline(v = c(t_MECO, t_StageSep, t_SES), col=c("red", "black", "green"), lty=2, lwd=2)
+
+# 3. Mass Depletion Graph (Showing the instantaneous mass drop)
+plot(time_steps, optimal_trajectory$m / 1000, type="l", lwd=3, col="purple",
+     main="Vehicle Mass vs Time", xlab="Time (seconds)", ylab="Mass (Metric Tons)")
+abline(v = c(t_MECO, t_StageSep, t_SES), col=c("red", "black", "green"), lty=2, lwd=2)
+
+# Reset plot layout to default
+par(mfrow = c(1, 1))
+```
+
+```{r simulation_animations, echo=TRUE, message=FALSE, warning=FALSE, fig.width=7, fig.height=5, out.width="65%"}
+# --- 7. ANIMATE AND EXPORT 2D SPATIAL GIF ---
+library(magick)
+
+
+# Simulated Pitch Angle (90 deg to 0 deg)
+pitch_angle <- seq(pi/2, 0, length.out = N)
+
+# Open graphics device
+img <- image_graph(width = 800, height = 600, res = 96)
+
+# Find maximum downrange distance so we can lock the X-axis
+final_dt <- optimal_trajectory$t_f / (N-1)
+final_v_horiz <- optimal_trajectory$v * cos(pitch_angle)
+final_x_dist <- cumsum(final_v_horiz * final_dt)
+max_x <- max(final_x_dist) / 1000
+
+for(i in 1:length(iteration_history)) {
+  
+  # Extract the snapshot for this iteration
+  snap <- iteration_history[[i]]
+  snap_dt <- snap$t_f / (N-1)
+  
+  # Calculate 2D coordinates for this specific snapshot
+  v_horiz <- snap$v * cos(pitch_angle)
+  x_dist <- cumsum(v_horiz * snap_dt)
+  
+  # Plot the iteration
+  plot(x_dist / 1000, snap$h / 1000, type="l", 
+       lwd=2, col="gray",
+       xlim=c(0, max_x * 1.1),             # Locked X Axis
+       ylim=c(0, (target_alt * 1.2)/1000), # Locked Y Axis
+       main=paste("2D Trajectory - Optimizer Iteration:", i * 500),
+       xlab="Downrange Distance (km)", 
+       ylab="Altitude (km)")
+  
+  # Draw the final optimal solution and Splice Point on the last frame
+  if (i == length(iteration_history)) {
+    lines(final_x_dist / 1000, optimal_trajectory$h / 1000, lwd=4, col="darkred")
+    
+    # Add Stage Separation Marker
+    points(final_x_dist[N_stage] / 1000, optimal_trajectory$h[N_stage] / 1000, 
+           col="black", pch=19, cex=1.5)
+    text(final_x_dist[N_stage] / 1000, optimal_trajectory$h[N_stage] / 1000, 
+         labels="Stage Sep", pos=4, cex=1.2, col="black")
+  }
+}
+
+dev.off()
+
+animation <- image_animate(img, fps = 100) 
+image_write(animation, "2D_trajectory.gif")
+
+
+#################*&^%^&*&^%^&^%^&
+#visible change in the altitude with time over number of iterations
+
+library(magick)
+time_steps <- seq(0, (N-1)*dt, by=dt)
+
+# 1. Opening a "virtual" graphics device(variable name) to capture the plots
+img <- image_graph(width = 800, height = 600, res = 96)
+
+# 2. Run the exact same plotting loop (No Sys.sleep needed)
+for(i in 1:length(iteration_history)) {
+  
+  # Draw the plot for this specific iteration
+  plot(time_steps, iteration_history[[i]]$h / 1000, type="l", 
+       lwd=2, col="gray",
+       ylim=c(0, (target_alt * 1.2) / 1000),
+       main=paste("Optimizer Iteration:", i * 500),
+       xlab="Time (seconds)", 
+       ylab="Altitude (km)")
+  
+  # If its the very last frame,over-draw the final optimal blue line
+  if (i == length(iteration_history)) {
+    lines(time_steps, optimal_trajectory$h / 1000, lwd=4, col="blue")
+  }
+}
+
+# 3. Close the virtual graphics device
+dev.off()
+
+# 4. Animate the captured frames and save the file
+animation <- image_animate(img, fps = 10) # fps = frames per second
+image_write(animation, "optimizer_iterations.gif")
+
+#########################$$$$$$$$$*&^%^&*&$$$%$%^^*$*^^^%^%^%^%%%^
+# --- 8. PLOT 2D SPATIAL TRAJECTORY (X vs Y) ---
+
+# [Approximating Downrange Distance for our 1D Data]
+# We simulate a gravity turn where the rocket pitches from 90 deg (vertical) to 0 deg (horizontal)
+pitch_angle <- seq(pi/2, 0, length.out = N) 
+
+# Horizontal velocity is = total velocity * cos(pitch angle)
+v_horizontal <- optimal_trajectory$v * cos(pitch_angle)
+
+# Integrate horizontal velocity over time to get Downrange Distance (x)
+x_dist <- cumsum(v_horizontal * (optimal_trajectory$t_f / (N-1))) 
+
+# Creating the 2D Plot
+plot(x_dist / 1000, optimal_trajectory$h / 1000, type="l", lwd=3, col="darkred",
+     main="Falcon Heavy 2D Flight Trajectory",
+     xlab="Downrange Distance (km)", 
+     ylab="Altitude (km)")
+
+# Adding a marker for the exact Stage Separation Splice Point
+points(x_dist[N_stage] / 1000, optimal_trajectory$h[N_stage] / 1000, 
+       col="black", pch=19, cex=1.5)
+
+# Adding a text label next to the dot
+text(x_dist[N_stage] / 1000, optimal_trajectory$h[N_stage] / 1000, 
+     labels="Stage Sep (Booster Drop)", pos=4, cex=0.9, col="black")
+
+
+```
+
+**Y-X Trajectory Animation** (downrange distance vs. altitude, across optimizer iterations)
+
+![](2D_trajectory.gif){width=60%}
+
+**Altitude-Time Simulation** (altitude vs. time, across optimizer iterations)
+
+![](optimizer_iterations.gif){width=60%}
+
+#### **Results**
+
+The Header (Solver Metadata).
+
+Number of Iterations....: 20000.
+
+The solver hit the absolute maximum time limit we gave it in maxeval = 20000. It was forced to stop here and hand you the best answer it had so far.Termination conditions: xtol_rel: 1e-05 maxeval: 20000.
+
+This reminds us of the rules we set. It is trying to get the iteration-to-iteration changes down to 0.00001 (xtol_rel), but it hit the 20,000 maxeval wall first.
+
+Number of inequality constraints: 0. We used hard boundaries (lb and ub) instead of soft inequality formulas, so this registers as 0. Number of equality constraints: 302.?
+
+\| Where does 302 come from=5 Boundary rules (Start Altitude=0, Start Vel=0, Start Mass=111500, Target Alt=1,000,000, Target Vel=7350).\
+
+\| 297 Physics rules: We have 100 time nodes.That means there are 99 'steps' between them. At each step, the solver must satisfy 3 physics equations (change in altitude, velocity, and mass). $99 \times 3 = 297$.$297 + 5 = 302$\
+
+\| Current value of objective function: -22460.21 .Because we told the minimizer to look at state\$m[N], this means the final rocket mass in orbit is 22,460.21 kg.
+
+\| The "Current value of controls" This massive block of numbers is the single, flattened Decision Vector (\$x\$). Because we set $N = 100$, and we have 4 variables plus Time, there are exactly 401 numbers in this paragraph.
+
+\| mapping them to the unpack_state() function, here is exactly what they are: Numbers 1 to 100: The Altitude Array ($h$)0.1993,..., 109.65,... up to... 979307,..., 999926 .This is the height of the rocket at every time step.Notice it starts near 0 meters and ends at exactly 999,926 meters (1,000 km), perfectly hitting the target.\
+
+\| Numbers 101 to 200: The Velocity Array ($v$)68.4082,..., 128.91,... up to... 7419.53,..., 7418.57 This is how fast the rocket is going at every step. It starts slow and smoothly accelerates to 7,418 m/s, safely achieving orbital velocity.\
+
+\| Numbers 201 to 300: The Mass Array ($m$)111499.9,..., 110871.5,... up to... 22460.22 This is the weight of the rocket.It starts fully fueled at \~111,500 kg.If looked closely at the middle of this block, you will see a massive, instant jump from 97286.53 down to 66693.57. That is the Splice Point. That is the exact mathematical moment the 30,000 kg empty boosters fell away from the ship.It ends at the optimized final mass of 22,460 kg.\
+
+\| Numbers 301 to 400: The Thrust Array ($u$)770568,..., 760590.5,... up to... 750028.8 This is the throttle command in Newtons. The solver decided the most efficient way to space was to command a fairly constant thrust hovering between 700,000 N and 770,000 N for the entire flight.\
+
+\| Number 401: The Free Terminal Time ($t_f$)+274.2702. This very last lonely number in the printout. By making time a free variable, the solver dynamically calculated that the absolute most fuel-efficient flight time to reach a 1000 km orbit with this specific engine profile is exactly 274.27 seconds
+
+**LIMITATION** While this optimization framework successfully computes an optimal ascent profile, it operates under several simplifying assumptions.
+
+:   Uniform Gravity Field: We used an inverse-square gravity model, but assumed the Earth is a perfect sphere. Real trajectory models account for the Earth's oblateness (the $J2$ perturbation), where gravity is slightly stronger at the poles than at the equator.
+
+:   Constant Engine Performance: We hardcoded Specific Impulse ($I_{sp}$) and Maximum Thrust ($U_{max}$) as constants. In reality, rocket engine performance changes dynamically with atmospheric pressure; engines are significantly more efficient in the vacuum of space than at sea level.
+
+**CONCLUSION** This project successfully demonstrates the transition of a complex aerospace engineering problem from theoretical physics into a fully functional, numerical computer simulation. By utilizing the nloptr package in R, we successfully modeled a staged launch vehicle, utilizing the technical specifications of the SpaceX Falcon Heavy Merlin Vacuum (MVac) stage, ascending to a 1,000 km target orbit.
+
