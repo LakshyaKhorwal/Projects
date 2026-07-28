@@ -1,1 +1,322 @@
+install.packages("ggplot2")
+install.packages("corrplot")
+install.packages("scales")
 
+library(ggplot2)
+library(corrplot)
+library(scales)
+
+
+getwd()
+setwd("C:/ISI-D BSDS/SEMESTER-2/DAURP/Project/Aniket Raj/Correct_form")
+getwd()
+
+crime_raw <- read.csv("NCRB-2021_Table_19B.2.csv", check.names = FALSE)
+
+crime <- crime_raw[1:19, ]
+
+# Simple column names 
+crime$city    <- crime[["City"]]
+crime$total   <- crime[["Total Persons Arrested by age and Sex"]]
+crime$male    <- crime[["Total - Male"]]
+crime$female  <- crime[["Total - Female"]]
+crime$juv     <- crime[["Juveniles Apprehended - Total"]]
+crime$age1830 <- crime[["18 Years & Above - Below 30 Years - Total"]]
+crime$age3045 <- crime[["30 Years & above - Below 45 Years - Total"]]
+crime$age4560 <- crime[["45 Years & above - Below 60 Years - Total"]]
+crime$age60   <- crime[["60 Years & Above - Total"]]
+
+cat("Rows:", nrow(crime), "| Columns:", ncol(crime), "\n")
+print(head(crime[, c("city", "total", "male", "female")]))
+
+
+# SECTION A: BAR GRAPHS
+
+# GRAPH 1: Total Arrests — City wise
+
+ggplot(crime, aes(x = reorder(city, total), y = total)) +
+  geom_bar(stat = "identity", fill = "green", width = 0.7) +
+  coord_flip() +
+  geom_text(aes(label = comma(total)), hjust = -0.1, size = 3) +
+  scale_y_continuous(labels = comma, limits = c(0, 145000)) +
+  labs(
+    title    = "Graph 1: Total Arrests by City (NCRB 2021)",
+    subtitle = "Delhi sabse zyada | Kozhikode sabse kam",
+    x        = "City",
+    y        = "Total Persons Arrested"
+  ) +
+  theme_minimal(base_size = 12) +
+  theme(plot.title = element_text(face = "bold"))
+
+ggsave("Graph1_Total_Arrests.png", width = 11, height = 7, dpi = 150)
+cat("Saved: Graph1_Total_Arrests.png\n")
+
+
+
+# GRAPH 2: Male vs Female — Grouped Bar
+
+male_df   <- data.frame(city = crime$city, count = crime$male,   gender = "Male")
+female_df <- data.frame(city = crime$city, count = crime$female, gender = "Female")
+gdf       <- rbind(male_df, female_df)
+
+ggplot(gdf, aes(x = reorder(city, -count), y = count, fill = gender)) +
+  geom_bar(stat = "identity", position = "dodge", width = 0.7) +
+  coord_flip() +
+  scale_fill_manual(values = c("Male" = "blue", "Female" = "red")) +
+  scale_y_continuous(labels = comma) +
+  labs(
+    title    = "Graph 2: Male vs Female Arrests by City (2021)",
+    subtitle = "Male arrests is heigher in each city",
+    x        = "City",
+    y        = "Number of Arrests",
+    fill     = "Gender"
+  ) +
+  theme_minimal(base_size = 12) +
+  theme(plot.title = element_text(face = "bold"))
+
+ggsave("Graph2_Male_Female.png", width = 11, height = 7, dpi = 150)
+cat("Saved: Graph2_Male_Female.png\n")
+
+
+# GRAPH 3: Stacked Bar — Age Group by City
+
+age_long <- data.frame(
+  city  = rep(crime$city, 5),
+  count = c(crime$juv, crime$age1830, crime$age3045, crime$age4560, crime$age60),
+  group = rep(c("Juveniles", "18-30 Yrs", "30-45 Yrs", "45-60 Yrs", "60+ Yrs"),
+              each = 19)
+)
+age_long$group <- factor(age_long$group,
+  levels = c("Juveniles", "18-30 Yrs", "30-45 Yrs", "45-60 Yrs", "60+ Yrs"))
+
+ggplot(age_long, aes(x = reorder(city, -count), y = count, fill = group)) +
+  geom_bar(stat = "identity", position = "stack") +
+  coord_flip() +
+  scale_fill_brewer(palette = "Set2") +
+  scale_y_continuous(labels = comma) +
+  labs(
+    title    = "Graph 3: Age Group Breakdown by City (Stacked Bar)",
+    subtitle = "18-30 age group sabse bada contributor hai",
+    x        = "City",
+    y        = "Number of Arrests",
+    fill     = "Age Group"
+  ) +
+  theme_minimal(base_size = 12) +
+  theme(plot.title = element_text(face = "bold"))
+
+ggsave("Graph3_Stacked_Age.png", width = 11, height = 7, dpi = 150)
+cat("Saved: Graph3_Stacked_Age.png\n")
+
+
+# SECTION B: PIE CHART
+
+age_total <- data.frame(
+  group = c("Juveniles", "18-30 Yrs", "30-45 Yrs", "45-60 Yrs", "60+ Yrs"),
+  count = c(sum(crime$juv), sum(crime$age1830), sum(crime$age3045),
+            sum(crime$age4560), sum(crime$age60))
+)
+age_total$pct   <- round(age_total$count / sum(age_total$count) * 100, 1)
+
+ggplot(age_total, aes(x = 2, y = count, fill = group)) +
+  geom_bar(stat = "identity", width = 1, color = "white", linewidth = 0.8) +
+  coord_polar("y", start = 0) +
+  xlim(0.5, 3.5) +
+  geom_text(aes(label = paste0(pct, "%")),
+            position = position_stack(vjust = 0.5),
+            size = 4.5, fontface = "bold", color = "black") +
+  scale_fill_brewer(palette = "Set2") +
+  labs(
+    title = "Graph 4: Arrests by Age Group — All 19 Cities Combined",
+    fill  = "Age Group"
+  ) +
+  theme_void() +
+  theme(
+    plot.title      = element_text(face = "bold", size = 14, hjust = 0.5),
+    legend.position = "right"
+  )
+
+ggsave("Graph4_Pie_AgeGroup.png", width = 9, height = 7, dpi = 150)
+cat("Saved: Graph4_Pie_AgeGroup.png\n")
+
+
+# SECTION C: HISTOGRAM & BOXPLOT
+
+# GRAPH 5: Histogram — Total Arrests Distribution
+
+ggplot(crime, aes(x = total)) +
+  geom_histogram(bins = 7, fill = "orange", color = "white", linewidth = 0.8) +
+  geom_vline(xintercept = mean(crime$total),
+             color = "red", linetype = "dashed", linewidth = 1.2) +
+  annotate("text",
+           x     = mean(crime$total) + 12000,
+           y     = 4.2,
+           label = paste0("Mean = ", comma(round(mean(crime$total)))),
+           color = "red", size = 4) +
+  scale_x_continuous(labels = comma) +
+  scale_y_continuous(breaks = 0:6) +
+  labs(
+    title    = "Graph 5: Distribution of Total Arrests Across 19 Cities",
+    subtitle = "Most cities have low arrests | Delhi & Chennai are outliers",
+    x        = "Total Arrests",
+    y        = "Number of Cities"
+  ) +
+  theme_minimal(base_size = 12) +
+  theme(plot.title = element_text(face = "bold"))
+
+ggsave("Graph5_Histogram.png", width = 9, height = 6, dpi = 150)
+cat("Saved: Graph5_Histogram.png\n")
+
+
+# GRAPH 6: Boxplot — Age Group Spread
+
+
+ggplot(age_long, aes(x = group, y = count, fill = group)) +
+  geom_boxplot(alpha = 0.8, outlier.color = "red", outlier.size = 2) +
+  scale_fill_brewer(palette = "Pastel1") +
+  scale_y_continuous(labels = comma) +
+  labs(
+    title    = "Graph 6: Spread of Arrests by Age Group",
+    subtitle = "18-30 group ki variability sabse zyada hai",
+    x        = "Age Group",
+    y        = "Arrests per City"
+  ) +
+  theme_minimal(base_size = 12) +
+  theme(
+    plot.title      = element_text(face = "bold"),
+    legend.position = "none"
+  )
+
+ggsave("Graph6_Boxplot.png", width = 9, height = 6, dpi = 150)
+cat("Saved: Graph6_Boxplot.png\n")
+
+
+# SECTION D: CORRELATION ANALYSIS
+
+
+cat("\n--- Correlation Values ---\n")
+cat("18-30 Yrs  vs Total:", round(cor(crime$age1830, crime$total), 3), "\n")
+cat("30-45 Yrs  vs Total:", round(cor(crime$age3045, crime$total), 3), "\n")
+cat("Male       vs Total:", round(cor(crime$male,    crime$total), 3), "\n")
+cat("Female     vs Total:", round(cor(crime$female,  crime$total), 3), "\n")
+cat("Juveniles  vs Total:", round(cor(crime$juv,     crime$total), 3), "\n")
+
+
+# GRAPH 7: Correlation Heatmap
+
+cor_vars <- crime[, c("total", "male", "female", "juv",
+                      "age1830", "age3045", "age4560", "age60")]
+colnames(cor_vars) <- c("Total", "Male", "Female", "Juveniles",
+                        "18-30 Yrs", "30-45 Yrs", "45-60 Yrs", "60+ Yrs")
+cor_matrix <- cor(cor_vars)
+
+corrplot(cor_matrix,
+         method      = "color",
+         type        = "lower",
+         addCoef.col = "black",
+         number.cex  = 0.75,
+         tl.cex      = 0.85,
+         title       = "Graph 7: Correlation Heatmap — NCRB 2021",
+         mar         = c(0, 0, 2, 0))
+
+cat("Graph 7 RStudio Plots panel mein dikh raha hai\n")
+
+
+
+# SECTION E: SCATTER PLOT + SIMPLE LINEAR REGRESSION
+
+# GRAPH 8: Scatter Plot — 18-30 vs Total Arrests
+
+
+ggplot(crime, aes(x = age1830, y = total)) +
+  geom_point(color = "purple", size = 4, alpha = 0.85) +
+  geom_text(aes(label = city), vjust = -0.8, size = 2.8, color = "grey30") +
+  scale_x_continuous(labels = comma) +
+  scale_y_continuous(labels = comma) +
+  labs(
+    title    = "Graph 8: Scatter Plot — 18-30 Age Group vs Total Arrests",
+    subtitle = "Har dot ek city hai | Strong positive relationship dikh raha hai",
+    x        = "18-30 Age Group Arrests",
+    y        = "Total Persons Arrested"
+  ) +
+  theme_minimal(base_size = 12) +
+  theme(plot.title = element_text(face = "bold"))
+
+ggsave("Graph8_Scatter.png", width = 10, height = 7, dpi = 150)
+cat("Saved: Graph8_Scatter.png\n")
+
+
+# SIMPLE LINEAR REGRESSION MODEL
+# Y = total arrests (jo predict karna hai)
+# X = 18-30 age group arrests (jisse predict karna hai)
+# Formula: Y = a + b*X
+
+model <- lm(total ~ age1830, data = crime)
+print(summary(model))
+
+a  <- round(coef(model)[1], 2)
+b  <- round(coef(model)[2], 4)
+r2 <- round(summary(model)$r.squared, 3)
+pv <- summary(model)$coefficients[2, 4]
+
+cat("\n--- Model Results (Simple Language) ---\n")
+cat("Intercept (a) =", a, "\n")
+cat("  Matlab: Jab 18-30 arrests = 0 ho, estimated total =", round(a), "\n")
+cat("Slope (b) =", b, "\n")
+cat("  Matlab: 18-30 mein 1 arrest badhne par total mein", b, "ki increase\n")
+cat("R-squared =", r2, "\n")
+cat("  Matlab: Model", r2 * 100, "% variation explain karta hai\n")
+cat("p-value =", format(pv, scientific = TRUE), "\n")
+cat("  Matlab: Model statistically significant hai (p < 0.05)\n")
+
+
+# GRAPH 9: Regression Line  Scatter Plot
+
+
+ggplot(crime, aes(x = age1830, y = total)) +
+  geom_point(color = "purple", size = 4, alpha = 0.85) +
+  geom_smooth(method = "lm", color = "purple", se = TRUE, linewidth = 1.2) +
+  geom_text(aes(label = city), vjust = -0.8, size = 2.8, color = "grey30") +
+  scale_x_continuous(labels = comma) +
+  scale_y_continuous(labels = comma) +
+  labs(
+    title    = "Graph 9: Simple Linear Regression — 18-30 Arrests vs Total",
+    subtitle = paste0("Y = ", a, " + ", b, " x X  |  R² = ", r2,
+                      "  |  Red line = best fit line"),
+    x        = "18-30 Age Group Arrests (X)",
+    y        = "Total Persons Arrested (Y)"
+  ) +
+  theme_minimal(base_size = 12) +
+  theme(plot.title = element_text(face = "bold"))
+
+ggsave("Graph9_Regression.png", width = 10, height = 7, dpi = 150)
+cat("Saved: Graph9_Regression.png\n")
+
+
+# GRAPH 10: Regression Diagnostic Plots
+
+
+png("Graph10_Diagnostics.png", width = 900, height = 750, res = 120)
+par(mfrow = c(2, 2))
+plot(model)
+par(mfrow = c(1, 1))
+dev.off()
+cat("Saved: Graph10_Diagnostics.png\n")
+
+
+# FINAL SUMMARY
+
+
+cat("   PROJECT SUMMARY — NCRB 2021 ANALYSIS\n")
+
+cat("Total Cities Analyzed      :", nrow(crime), "\n")
+cat("Total Arrests (All Cities) :", format(sum(crime$total),  big.mark = ","), "\n")
+cat("Total Male Arrests         :", format(sum(crime$male),   big.mark = ","), "\n")
+cat("Total Female Arrests       :", format(sum(crime$female), big.mark = ","), "\n")
+cat("Male:Female Ratio          :", round(sum(crime$male) / sum(crime$female), 1), ":1\n")
+cat("City with Most Arrests     :", crime$city[which.max(crime$total)],
+    "(", format(max(crime$total), big.mark = ","), ")\n")
+cat("City with Least Arrests    :", crime$city[which.min(crime$total)],
+    "(", format(min(crime$total), big.mark = ","), ")\n")
+cat("Correlation (18-30 & Total):", round(cor(crime$age1830, crime$total), 3), "\n")
+cat("R-squared                  :", r2, "\n")
+cat("Regression Equation        : Total =", a, "+", b, "x (18-30 Arrests)\n")
