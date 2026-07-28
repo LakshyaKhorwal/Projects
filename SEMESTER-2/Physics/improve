@@ -1,4 +1,0 @@
-the simulation can be made finer by
-1) increasing N
-2) decreasing dt
-3) decreasing xtol_rel
